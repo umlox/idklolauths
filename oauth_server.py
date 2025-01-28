@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get absolute path for database
-DATABASE_URL = os.path.join(os.getcwd(), 'users.db')
+DATABASE_URL = os.path.join('/data', 'users.db')
 
 def init_db():
     conn = sqlite3.connect(DATABASE_URL)
