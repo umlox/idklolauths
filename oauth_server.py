@@ -102,16 +102,20 @@ async def process_oauth(code):
 def callback():
     code = request.args.get('code')
     guild_id = request.args.get('guild_id')
+    print(f"Received callback with code: {code}")
     
     if code:
         try:
             result = asyncio.run(process_oauth(code))
-            print(f"New auth saved: {result}")
-            return "✅ Authorization successful! You can close this window."
+            print(f"OAuth process result: {result}")
+            if result:
+                return "✅ Authorization successful! You can close this window."
+            return "❌ Authorization failed. Please try again."
         except Exception as e:
-            print(f"Error during OAuth process: {e}")
+            print(f"Error during OAuth: {e}")
             return "Authorization processing..."
     return "Ready for authorization"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
