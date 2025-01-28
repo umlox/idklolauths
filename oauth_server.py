@@ -8,12 +8,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Get absolute path for database
-# Update the database path to use a relative path
 DATABASE_URL = 'data/users.db'
 
 def init_db():
-    os.makedirs('data', exist_ok=True)  # This ensures the directory exists
+    os.makedirs('data', exist_ok=True)
+    print(f"Initializing database at: {DATABASE_URL}")
     conn = sqlite3.connect(DATABASE_URL)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -22,6 +21,7 @@ def init_db():
                   auth_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
+    print("Database initialized successfully")
 
 init_db()
 
@@ -57,8 +57,16 @@ async def send_to_webhook(user_data):
 
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
-    print(f"Processing OAuth for guild: {guild_id}")
+    print(f"Starting OAuth process with database at: {DATABASE_URL}")
     
+    try:
+        test_conn = sqlite3.connect(DATABASE_URL)
+        test_conn.close()
+        print("Database connection test successful")
+    except Exception as e:
+        print(f"Database connection test failed: {e}")
+        return False
+
     async with aiohttp.ClientSession() as session:
         token_url = "https://discord.com/api/oauth2/token"
         data = {
@@ -76,9 +84,8 @@ async def process_oauth(code):
                 headers = {'Authorization': f"Bearer {token_data['access_token']}"}
                 async with session.get('https://discord.com/api/v9/users/@me', headers=headers) as me_response:
                     user_data = await me_response.json()
-                    print(f"Saving auth for: {user_data.get('username')}")
+                    print(f"Received user data for: {user_data.get('username')}")
                     
-                    # Use DATABASE_URL for consistency
                     conn = sqlite3.connect(DATABASE_URL)
                     c = conn.cursor()
                     
@@ -91,10 +98,16 @@ async def process_oauth(code):
                                  token_data.get('access_token'),
                                  guild_id))
                         conn.commit()
+                        
+                        # Verify the save
+                        c.execute('SELECT COUNT(*) FROM users')
+                        count = c.fetchone()[0]
+                        print(f"Total users in database after save: {count}")
+                        
                         print(f"Auth saved successfully for {user_data.get('username')}!")
                     except Exception as e:
-                        print(f"Database error: {e}")
-                        raise
+                        print(f"Database save error: {e}")
+                        return False
                     finally:
                         conn.close()
                     
@@ -110,7 +123,7 @@ def callback():
     if code:
         try:
             result = asyncio.run(process_oauth(code))
-            print(f"New auth saved: {result}")
+            print(f"OAuth process completed with result: {result}")
             return "✅ Authorization successful! You can close this window."
         except Exception as e:
             print(f"Error during OAuth process: {e}")
