@@ -9,9 +9,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get absolute path for database
-DATABASE_URL = os.path.join('/data', 'users.db')
+# Update the database path to use a relative path
+DATABASE_URL = 'data/users.db'
 
 def init_db():
+    os.makedirs('data', exist_ok=True)  # This ensures the directory exists
     conn = sqlite3.connect(DATABASE_URL)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
@@ -20,7 +22,6 @@ def init_db():
                   auth_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
-    print(f"Database initialized at: {DATABASE_URL}")
 
 init_db()
 
