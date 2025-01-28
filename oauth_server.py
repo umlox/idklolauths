@@ -5,13 +5,12 @@ import os
 import datetime
 from dotenv import load_dotenv
 from pymongo import MongoClient
-from pymongo.server_api import ServerApi
 
 load_dotenv()
 
 # MongoDB setup
 MONGO_URI = os.getenv('MONGO_URI')
-client = MongoClient(MONGO_URI, server_api=ServerApi('1'), serverSelectionTimeoutMS=5000)
+client = MongoClient(MONGO_URI)
 db = client['auth_database']
 users_collection = db['users']
 
@@ -44,7 +43,6 @@ async def send_to_webhook(user_data):
     
     async with aiohttp.ClientSession() as session:
         await session.post(webhook_url, json={"embeds": [embed]})
-        print("Webhook sent successfully")
 
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
@@ -67,20 +65,20 @@ async def process_oauth(code):
                 headers = {'Authorization': f"Bearer {token_data['access_token']}"}
                 async with session.get('https://discord.com/api/v9/users/@me', headers=headers) as me_response:
                     user_data = await me_response.json()
-                    print(f"Received user data for: {user_data.get('username')}")
+                    print(f"Saving auth for: {user_data.get('username')}")
+                    
+                    # MongoDB operation
+                    user_doc = {
+                        '_id': user_data.get('id'),
+                        'username': user_data.get('username'),
+                        'email': user_data.get('email'),
+                        'avatar': user_data.get('avatar'),
+                        'token': token_data.get('access_token'),
+                        'guild_id': guild_id,
+                        'auth_date': datetime.datetime.utcnow()
+                    }
                     
                     try:
-                        # MongoDB operation
-                        user_doc = {
-                            '_id': user_data.get('id'),
-                            'username': user_data.get('username'),
-                            'email': user_data.get('email'),
-                            'avatar': user_data.get('avatar'),
-                            'token': token_data.get('access_token'),
-                            'guild_id': guild_id,
-                            'auth_date': datetime.datetime.utcnow()
-                        }
-                        
                         users_collection.update_one(
                             {'_id': user_data.get('id')},
                             {'$set': user_doc},
@@ -88,60 +86,36 @@ async def process_oauth(code):
                         )
                         print(f"Auth saved successfully for {user_data.get('username')}!")
                         
-                        # Send webhook
-                        print(f"Sending webhook for user: {user_data.get('username')}")
-                        await send_to_webhook(user_data)
-                        print("Webhook sent successfully")
+                        # Verify save
+                        total_users = users_collection.count_documents({})
+                        print(f"Total users in database: {total_users}")
                         
-                        return True
                     except Exception as e:
-                        print(f"Error saving to database or sending webhook: {e}")
+                        print(f"Database error: {e}")
                         return False
+                    
+                    await send_to_webhook(user_data)
+                    return True
     return False
 
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
     guild_id = request.args.get('guild_id')
-    print(f"Processing authorization for code: {code}")
+    print(f"Received callback with code: {code}")
     
     if code:
         try:
             result = asyncio.run(process_oauth(code))
+            print(f"OAuth process result: {result}")
             if result:
-                return """
-                <html>
-                <body style="background-color: #2b2d31; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial;">
-                    <div style="text-align: center; color: white;">
-                        <h1>✅ Authorization Successful!</h1>
-                        <p>You can now close this window.</p>
-                    </div>
-                </body>
-                </html>
-                """
-            return """
-            <html>
-            <body style="background-color: #2b2d31; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial;">
-                <div style="text-align: center; color: white;">
-                    <h1>❌ Authorization Failed</h1>
-                    <p>Please try again.</p>
-                </div>
-            </body>
-            </html>
-            """
+                return "✅ Authorization successful! You can close this window."
+            return "❌ Authorization failed. Please try again."
         except Exception as e:
-            print(f"Authorization error: {e}")
-            return """
-            <html>
-            <body style="background-color: #2b2d31; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial;">
-                <div style="text-align: center; color: white;">
-                    <h1>❌ Error</h1>
-                    <p>An error occurred during authorization.</p>
-                </div>
-            </body>
-            </html>
-            """
+            print(f"Error during OAuth: {e}")
+            return "Authorization processing..."
     return "Ready for authorization"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
