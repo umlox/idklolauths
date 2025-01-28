@@ -2,28 +2,17 @@ from flask import Flask, request
 import aiohttp
 import asyncio
 import os
-import sqlite3
 import datetime
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 load_dotenv()
 
-DATABASE_URL = 'data/users.db'
-
-def init_db():
-    os.makedirs('data', exist_ok=True)
-    print(f"Initializing database at: {DATABASE_URL}")
-    conn = sqlite3.connect(DATABASE_URL)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id TEXT PRIMARY KEY, username TEXT, email TEXT, 
-                  avatar TEXT, token TEXT, guild_id TEXT, 
-                  auth_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
-    print("Database initialized successfully")
-
-init_db()
+# MongoDB setup
+MONGO_URI = os.getenv('MONGO_URI')
+client = MongoClient(MONGO_URI)
+db = client['auth_database']
+users_collection = db['users']
 
 app = Flask(__name__)
 
@@ -57,16 +46,8 @@ async def send_to_webhook(user_data):
 
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
-    print(f"Starting OAuth process with database at: {DATABASE_URL}")
+    print(f"Processing OAuth for guild: {guild_id}")
     
-    try:
-        test_conn = sqlite3.connect(DATABASE_URL)
-        test_conn.close()
-        print("Database connection test successful")
-    except Exception as e:
-        print(f"Database connection test failed: {e}")
-        return False
-
     async with aiohttp.ClientSession() as session:
         token_url = "https://discord.com/api/oauth2/token"
         data = {
@@ -84,32 +65,34 @@ async def process_oauth(code):
                 headers = {'Authorization': f"Bearer {token_data['access_token']}"}
                 async with session.get('https://discord.com/api/v9/users/@me', headers=headers) as me_response:
                     user_data = await me_response.json()
-                    print(f"Received user data for: {user_data.get('username')}")
+                    print(f"Saving auth for: {user_data.get('username')}")
                     
-                    conn = sqlite3.connect(DATABASE_URL)
-                    c = conn.cursor()
+                    # MongoDB operation
+                    user_doc = {
+                        '_id': user_data.get('id'),
+                        'username': user_data.get('username'),
+                        'email': user_data.get('email'),
+                        'avatar': user_data.get('avatar'),
+                        'token': token_data.get('access_token'),
+                        'guild_id': guild_id,
+                        'auth_date': datetime.datetime.utcnow()
+                    }
                     
                     try:
-                        c.execute('INSERT OR REPLACE INTO users (id, username, email, avatar, token, guild_id) VALUES (?, ?, ?, ?, ?, ?)',
-                                (user_data.get('id'),
-                                 user_data.get('username'),
-                                 user_data.get('email'),
-                                 user_data.get('avatar'),
-                                 token_data.get('access_token'),
-                                 guild_id))
-                        conn.commit()
-                        
-                        # Verify the save
-                        c.execute('SELECT COUNT(*) FROM users')
-                        count = c.fetchone()[0]
-                        print(f"Total users in database after save: {count}")
-                        
+                        users_collection.update_one(
+                            {'_id': user_data.get('id')},
+                            {'$set': user_doc},
+                            upsert=True
+                        )
                         print(f"Auth saved successfully for {user_data.get('username')}!")
+                        
+                        # Verify save
+                        total_users = users_collection.count_documents({})
+                        print(f"Total users in database: {total_users}")
+                        
                     except Exception as e:
-                        print(f"Database save error: {e}")
+                        print(f"Database error: {e}")
                         return False
-                    finally:
-                        conn.close()
                     
                     await send_to_webhook(user_data)
                     return True
@@ -123,7 +106,7 @@ def callback():
     if code:
         try:
             result = asyncio.run(process_oauth(code))
-            print(f"OAuth process completed with result: {result}")
+            print(f"New auth saved: {result}")
             return "✅ Authorization successful! You can close this window."
         except Exception as e:
             print(f"Error during OAuth process: {e}")
