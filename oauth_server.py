@@ -41,8 +41,15 @@ async def send_to_webhook(user_data):
         }
     }
     
-    async with aiohttp.ClientSession() as session:
-        await session.post(webhook_url, json={"embeds": [embed]})
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(webhook_url, json={"embeds": [embed]}) as response:
+                if response.status == 204:
+                    print("Webhook sent successfully")
+                else:
+                    print(f"Webhook failed with status: {response.status}")
+    except Exception as e:
+        print(f"Error sending webhook: {e}")
 
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
@@ -67,7 +74,6 @@ async def process_oauth(code):
                     user_data = await me_response.json()
                     print(f"Saving auth for: {user_data.get('username')}")
                     
-                    # MongoDB operation
                     user_doc = {
                         '_id': user_data.get('id'),
                         'username': user_data.get('username'),
@@ -86,22 +92,18 @@ async def process_oauth(code):
                         )
                         print(f"Auth saved successfully for {user_data.get('username')}!")
                         
-                        # Verify save
-                        total_users = users_collection.count_documents({})
-                        print(f"Total users in database: {total_users}")
+                        # Send webhook after successful database operation
+                        await send_to_webhook(user_data)
+                        return True
                         
                     except Exception as e:
                         print(f"Database error: {e}")
                         return False
-                    
-                    await send_to_webhook(user_data)
-                    return True
     return False
 
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
-    guild_id = request.args.get('guild_id')
     print(f"Received callback with code: {code}")
     
     if code:
@@ -115,7 +117,6 @@ def callback():
             print(f"Error during OAuth: {e}")
             return "Authorization processing..."
     return "Ready for authorization"
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
