@@ -8,9 +8,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DATABASE_URL = os.getenv('DATABASE_URL', 'users.db')
+
 # Initialize database with correct structure
 def init_db():
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect(DATABASE_URL)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (id TEXT PRIMARY KEY, username TEXT, email TEXT, 
