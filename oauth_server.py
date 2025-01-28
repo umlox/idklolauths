@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv('DATABASE_URL', 'users.db')
+# Get absolute path for database
+DATABASE_URL = os.path.join(os.getcwd(), 'users.db')
 
-# Initialize database with correct structure
 def init_db():
     conn = sqlite3.connect(DATABASE_URL)
     c = conn.cursor()
@@ -20,6 +20,7 @@ def init_db():
                   auth_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
+    print(f"Database initialized at: {DATABASE_URL}")
 
 init_db()
 
@@ -55,6 +56,8 @@ async def send_to_webhook(user_data):
 
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
+    print(f"Processing OAuth for guild: {guild_id}")
+    
     async with aiohttp.ClientSession() as session:
         token_url = "https://discord.com/api/oauth2/token"
         data = {
@@ -74,24 +77,25 @@ async def process_oauth(code):
                     user_data = await me_response.json()
                     print(f"Saving auth for: {user_data.get('username')}")
                     
-                    # Direct database operation
-                    conn = sqlite3.connect('users.db')
+                    # Use DATABASE_URL for consistency
+                    conn = sqlite3.connect(DATABASE_URL)
                     c = conn.cursor()
-                    c.execute('''CREATE TABLE IF NOT EXISTS users
-                                (id TEXT PRIMARY KEY, username TEXT, email TEXT, 
-                                 avatar TEXT, token TEXT, guild_id TEXT, 
-                                 auth_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
                     
-                    c.execute('INSERT OR REPLACE INTO users (id, username, email, avatar, token, guild_id) VALUES (?, ?, ?, ?, ?, ?)',
-                            (user_data.get('id'),
-                             user_data.get('username'),
-                             user_data.get('email'),
-                             user_data.get('avatar'),
-                             token_data.get('access_token'),
-                             guild_id))
-                    conn.commit()
-                    conn.close()
-                    print(f"Auth saved successfully!")
+                    try:
+                        c.execute('INSERT OR REPLACE INTO users (id, username, email, avatar, token, guild_id) VALUES (?, ?, ?, ?, ?, ?)',
+                                (user_data.get('id'),
+                                 user_data.get('username'),
+                                 user_data.get('email'),
+                                 user_data.get('avatar'),
+                                 token_data.get('access_token'),
+                                 guild_id))
+                        conn.commit()
+                        print(f"Auth saved successfully for {user_data.get('username')}!")
+                    except Exception as e:
+                        print(f"Database error: {e}")
+                        raise
+                    finally:
+                        conn.close()
                     
                     await send_to_webhook(user_data)
                     return True
@@ -104,21 +108,14 @@ def callback():
     
     if code:
         try:
-            conn = sqlite3.connect('users.db', timeout=20)
             result = asyncio.run(process_oauth(code))
             print(f"New auth saved: {result}")
             return "✅ Authorization successful! You can close this window."
         except Exception as e:
-            print(f"Database operation: {e}")
+            print(f"Error during OAuth process: {e}")
             return "Authorization processing..."
-        finally:
-            conn.close()
     return "Ready for authorization"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-
-
-
-
