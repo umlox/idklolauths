@@ -111,12 +111,59 @@ def callback():
             result = asyncio.run(process_oauth(code))
             print(f"OAuth process result: {result}")
             if result:
-                return "✅ Authorization successful! You can close this window."
+                return """
+                    <html>
+                    <head>
+                        <style>
+                            body {
+                                background-color: #000000;
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                height: 100vh;
+                                margin: 0;
+                                font-family: Arial, sans-serif;
+                            }
+                            .auth-box {
+                                background: linear-gradient(45deg, #9b42f5, #7a19f3);
+                                padding: 30px 50px;
+                                border-radius: 15px;
+                                box-shadow: 0 0 20px rgba(155, 66, 245, 0.5);
+                                text-align: center;
+                                color: white;
+                                animation: glow 2s infinite alternate;
+                            }
+                            @keyframes glow {
+                                from {
+                                    box-shadow: 0 0 20px rgba(155, 66, 245, 0.5);
+                                }
+                                to {
+                                    box-shadow: 0 0 30px rgba(155, 66, 245, 0.8);
+                                }
+                            }
+                            .checkmark {
+                                font-size: 24px;
+                                margin-bottom: 10px;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="auth-box">
+                            <div class="checkmark">✨</div>
+                            Authorization Successful!
+                        </div>
+                        <script>
+                            setTimeout(() => window.close(), 3000);
+                        </script>
+                    </body>
+                    </html>
+                """
             return "❌ Authorization failed. Please try again."
         except Exception as e:
             print(f"Error during OAuth: {e}")
             return "Authorization processing..."
     return "Ready for authorization"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
