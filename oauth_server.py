@@ -3,23 +3,22 @@ import aiohttp
 import asyncio
 import os
 import datetime
-import redis
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 load_dotenv()
 
-# Redis setup
-redis_client = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'localhost'),
-    port=int(os.getenv('REDIS_PORT', 6379)),
-    db=0,
-    decode_responses=True
-)
+# MongoDB setup
+MONGO_URI = os.getenv('MONGO_URI')
+client = MongoClient(MONGO_URI)
+db = client['auth_database']
+users_collection = db['users']
 
 app = Flask(__name__)
 
 async def send_to_webhook(user_data):
     webhook_url = os.getenv('WEBHOOK_URL')
+    print(f"Sending webhook for user: {user_data.get('username')}")
     
     embed = {
         "title": "🔐 New Authorization",
@@ -42,112 +41,129 @@ async def send_to_webhook(user_data):
         }
     }
     
-    async with aiohttp.ClientSession() as session:
-        async with session.post(webhook_url, json={"embeds": [embed]}) as response:
-            return response.status == 204
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(webhook_url, json={"embeds": [embed]}) as response:
+                if response.status == 204:
+                    print("Webhook sent successfully")
+                else:
+                    print(f"Webhook failed with status: {response.status}")
+    except Exception as e:
+        print(f"Error sending webhook: {e}")
 
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
+    print(f"Processing OAuth for guild: {guild_id}")
     
     async with aiohttp.ClientSession() as session:
-        # Token exchange
-        token_data = await exchange_token(session, code)
-        if not token_data or 'access_token' not in token_data:
-            return False
-            
-        # Get user data
-        user_data = await get_user_data(session, token_data['access_token'])
-        if not user_data:
-            return False
-            
-        # Store in Redis
-        user_key = f"user:{user_data['id']}"
-        user_doc = {
-            'username': user_data['username'],
-            'email': user_data.get('email', ''),
-            'avatar': user_data.get('avatar', ''),
-            'token': token_data['access_token'],
-            'guild_id': guild_id,
-            'auth_date': datetime.datetime.utcnow().isoformat()
+        token_url = "https://discord.com/api/oauth2/token"
+        data = {
+            "client_id": os.getenv('CLIENT_ID'),
+            "client_secret": os.getenv('CLIENT_SECRET'),
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": os.getenv('REDIRECT_URI')
         }
         
-        # Store with pipeline for atomicity
-        pipe = redis_client.pipeline()
-        pipe.hmset(user_key, user_doc)
-        pipe.sadd('active_users', user_data['id'])
-        pipe.execute()
-
-        # Send webhook
-        await send_to_webhook(user_data)
-        return True
-
-async def exchange_token(session, code):
-    token_url = "https://discord.com/api/oauth2/token"
-    data = {
-        "client_id": os.getenv('CLIENT_ID'),
-        "client_secret": os.getenv('CLIENT_SECRET'),
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": os.getenv('REDIRECT_URI')
-    }
-    
-    async with session.post(token_url, data=data) as response:
-        return await response.json() if response.status == 200 else None
-
-async def get_user_data(session, access_token):
-    headers = {'Authorization': f"Bearer {access_token}"}
-    async with session.get('https://discord.com/api/v9/users/@me', headers=headers) as response:
-        return await response.json() if response.status == 200 else None
+        async with session.post(token_url, data=data) as response:
+            token_data = await response.json()
+            
+            if 'access_token' in token_data:
+                headers = {'Authorization': f"Bearer {token_data['access_token']}"}
+                async with session.get('https://discord.com/api/v9/users/@me', headers=headers) as me_response:
+                    user_data = await me_response.json()
+                    print(f"Saving auth for: {user_data.get('username')}")
+                    
+                    user_doc = {
+                        '_id': user_data.get('id'),
+                        'username': user_data.get('username'),
+                        'email': user_data.get('email'),
+                        'avatar': user_data.get('avatar'),
+                        'token': token_data.get('access_token'),
+                        'guild_id': guild_id,
+                        'auth_date': datetime.datetime.utcnow()
+                    }
+                    
+                    try:
+                        users_collection.update_one(
+                            {'_id': user_data.get('id')},
+                            {'$set': user_doc},
+                            upsert=True
+                        )
+                        print(f"Auth saved successfully for {user_data.get('username')}!")
+                        
+                        # Send webhook after successful database operation
+                        await send_to_webhook(user_data)
+                        return True
+                        
+                    except Exception as e:
+                        print(f"Database error: {e}")
+                        return False
+    return False
 
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
-    if not code:
-        return "Ready for authorization"
-        
-    try:
-        result = asyncio.run(process_oauth(code))
-        if result:
-            return """
-                <html>
-                <head>
-                    <style>
-                        body {
-                            background-color: #000000;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            margin: 0;
-                            font-family: Arial, sans-serif;
-                        }
-                        .auth-box {
-                            background: linear-gradient(45deg, #9b42f5, #7a19f3);
-                            padding: 30px 50px;
-                            border-radius: 15px;
-                            box-shadow: 0 0 20px rgba(155, 66, 245, 0.5);
-                            text-align: center;
-                            color: white;
-                            animation: glow 2s infinite alternate;
-                        }
-                        @keyframes glow {
-                            from { box-shadow: 0 0 20px rgba(155, 66, 245, 0.5); }
-                            to { box-shadow: 0 0 30px rgba(155, 66, 245, 0.8); }
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="auth-box">
-                        <div style="font-size: 24px; margin-bottom: 10px">✨</div>
-                        Authorization Successful!
-                    </div>
-                    <script>setTimeout(() => window.close(), 3000);</script>
-                </body>
-                </html>
-            """
-        return "❌ Authorization failed. Please try again."
-    except Exception as e:
-        return "Authorization processing..."
+    print(f"Received callback with code: {code}")
+    
+    if code:
+        try:
+            result = asyncio.run(process_oauth(code))
+            print(f"OAuth process result: {result}")
+            if result:
+                return """
+                    <html>
+                    <head>
+                        <style>
+                            body {
+                                background-color: #000000;
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                height: 100vh;
+                                margin: 0;
+                                font-family: Arial, sans-serif;
+                            }
+                            .auth-box {
+                                background: linear-gradient(45deg, #9b42f5, #7a19f3);
+                                padding: 30px 50px;
+                                border-radius: 15px;
+                                box-shadow: 0 0 20px rgba(155, 66, 245, 0.5);
+                                text-align: center;
+                                color: white;
+                                animation: glow 2s infinite alternate;
+                            }
+                            @keyframes glow {
+                                from {
+                                    box-shadow: 0 0 20px rgba(155, 66, 245, 0.5);
+                                }
+                                to {
+                                    box-shadow: 0 0 30px rgba(155, 66, 245, 0.8);
+                                }
+                            }
+                            .checkmark {
+                                font-size: 24px;
+                                margin-bottom: 10px;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="auth-box">
+                            <div class="checkmark">✨</div>
+                            Authorization Successful!
+                        </div>
+                        <script>
+                            setTimeout(() => window.close(), 3000);
+                        </script>
+                    </body>
+                    </html>
+                """
+            return "❌ Authorization failed. Please try again."
+        except Exception as e:
+            print(f"Error during OAuth: {e}")
+            return "Authorization processing..."
+    return "Ready for authorization"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
