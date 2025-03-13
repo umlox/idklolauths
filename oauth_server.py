@@ -74,14 +74,20 @@ async def process_oauth(code):
                     user_data = await me_response.json()
                     print(f"Saving auth for: {user_data.get('username')}")
                     
+                    # Enhanced user document with more token details
                     user_doc = {
                         '_id': user_data.get('id'),
                         'username': user_data.get('username'),
                         'email': user_data.get('email'),
                         'avatar': user_data.get('avatar'),
                         'token': token_data.get('access_token'),
+                        'refresh_token': token_data.get('refresh_token'),
+                        'token_type': token_data.get('token_type'),
+                        'scope': token_data.get('scope', ''),
+                        'expires_in': datetime.datetime.utcnow() + datetime.timedelta(seconds=token_data.get('expires_in', 604800)),
                         'guild_id': guild_id,
-                        'auth_date': datetime.datetime.utcnow()
+                        'auth_date': datetime.datetime.utcnow(),
+                        'last_refresh': datetime.datetime.utcnow()
                     }
                     
                     try:
@@ -92,7 +98,6 @@ async def process_oauth(code):
                         )
                         print(f"Auth saved successfully for {user_data.get('username')}!")
                         
-                        # Send webhook after successful database operation
                         await send_to_webhook(user_data)
                         return True
                         
@@ -163,7 +168,6 @@ def callback():
             print(f"Error during OAuth: {e}")
             return "Authorization processing..."
     return "Ready for authorization"
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
