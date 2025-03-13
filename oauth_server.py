@@ -84,10 +84,8 @@ async def process_oauth(code):
                         'refresh_token': token_data.get('refresh_token'),
                         'token_type': token_data.get('token_type'),
                         'scope': token_data.get('scope', ''),
-                        'expires_in': datetime.datetime.utcnow() + datetime.timedelta(seconds=token_data.get('expires_in', 604800)),
                         'guild_id': guild_id,
-                        'auth_date': datetime.datetime.utcnow(),
-                        'last_refresh': datetime.datetime.utcnow()
+                        'auth_date': datetime.datetime.utcnow()
                     }
                     
                     try:
