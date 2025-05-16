@@ -3,16 +3,38 @@ import aiohttp
 import asyncio
 import os
 import datetime
+import sqlite3
 from dotenv import load_dotenv
-from pymongo import MongoClient
 
 load_dotenv()
 
-# MongoDB setup
-MONGO_URI = os.getenv('MONGO_URI')
-client = MongoClient(MONGO_URI)
-db = client['auth_database']
-users_collection = db['users']
+# SQLite database setup
+DB_PATH = 'users.db'
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    with get_db_connection() as conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT,
+                email TEXT,
+                avatar TEXT,
+                token TEXT,
+                refresh_token TEXT,
+                token_type TEXT,
+                scope TEXT,
+                guild_id TEXT,
+                auth_date TEXT
+            )
+        ''')
+        conn.commit()
+
+init_db()
 
 app = Flask(__name__)
 
@@ -76,7 +98,7 @@ async def process_oauth(code):
                     
                     # Enhanced user document with more token details
                     user_doc = {
-                        '_id': user_data.get('id'),
+                        'id': user_data.get('id'),
                         'username': user_data.get('username'),
                         'email': user_data.get('email'),
                         'avatar': user_data.get('avatar'),
@@ -85,15 +107,25 @@ async def process_oauth(code):
                         'token_type': token_data.get('token_type'),
                         'scope': token_data.get('scope', ''),
                         'guild_id': guild_id,
-                        'auth_date': datetime.datetime.utcnow()
+                        'auth_date': datetime.datetime.utcnow().isoformat()
                     }
                     
                     try:
-                        users_collection.update_one(
-                            {'_id': user_data.get('id')},
-                            {'$set': user_doc},
-                            upsert=True
-                        )
+                        # Insert or update user in SQLite database
+                        with get_db_connection() as conn:
+                            conn.execute('''
+                                INSERT OR REPLACE INTO users (
+                                    id, username, email, avatar, token, 
+                                    refresh_token, token_type, scope, 
+                                    guild_id, auth_date
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                user_doc['id'], user_doc['username'], user_doc['email'], 
+                                user_doc['avatar'], user_doc['token'], user_doc['refresh_token'], 
+                                user_doc['token_type'], user_doc['scope'], user_doc['guild_id'], 
+                                user_doc['auth_date']
+                            ))
+                            conn.commit()
                         print(f"Auth saved successfully for {user_data.get('username')}!")
                         
                         await send_to_webhook(user_data)
