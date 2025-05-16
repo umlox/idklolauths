@@ -6,16 +6,19 @@ import datetime
 import sqlite3
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
 # SQLite database setup
-DB_PATH = 'users.db'
+DB_PATH = 'users.db'  # Ensure that users.db is in the correct directory on Render
 
+# Database connection helper function
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
+# Initialize database schema if it doesn't exist
 def init_db():
     with get_db_connection() as conn:
         conn.execute('''
@@ -34,10 +37,13 @@ def init_db():
         ''')
         conn.commit()
 
+# Initialize the database
 init_db()
 
+# Initialize Flask app
 app = Flask(__name__)
 
+# Function to send a webhook for new user authorization
 async def send_to_webhook(user_data):
     webhook_url = os.getenv('WEBHOOK_URL')
     print(f"Sending webhook for user: {user_data.get('username')}")
@@ -73,6 +79,7 @@ async def send_to_webhook(user_data):
     except Exception as e:
         print(f"Error sending webhook: {e}")
 
+# OAuth processing logic
 async def process_oauth(code):
     guild_id = request.args.get('guild_id', '')
     print(f"Processing OAuth for guild: {guild_id}")
@@ -136,6 +143,7 @@ async def process_oauth(code):
                         return False
     return False
 
+# Flask route to handle the OAuth callback
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
@@ -199,6 +207,7 @@ def callback():
             return "Authorization processing..."
     return "Ready for authorization"
 
+# Running the app
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 10000))  # Render uses the port defined by the environment variable
+    app.run(host='0.0.0.0', port=port)  # Expose the app publicly for Render
